@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Basic 3D Game</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #333; }
+        canvas { display: block; }
+        #instructions {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-family: sans-serif;
+            background-color: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="instructions">
+        Controls:<br>
+        - WASD: Move<br>
+        - SPACE: Jump<br>
+        - MOUSE: Look around<br>
+        - ARROW KEYS: Look around (alternative)<br>
+        - CLICK: Lock mouse pointer
+    </div>
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- Import Maps for ES Modules -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js"
+        }
+    }
+    </script>
+
+    <!-- Main Game Logic -->
+    <script type="module">
+        import * as THREE from 'three';
+        import * as CANNON from 'cannon-es';
+
+        // --- Basic Setup ---
+        const scene = new THREE.Scene();
+        const clock = new THREE.Clock();
+        let physicsWorld; // Initialize later
+
+        // --- Renderer ---
+        const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('gameCanvas'), antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Softer shadows
+
+        // --- Camera ---
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 5, 10); // Initial camera position
+        let cameraTarget = new THREE.Vector3(); // Point the camera looks at
+        let cameraDistance = 8; // Distance from player
+        let cameraPitch = 0.3; // Vertical angle
+        let cameraYaw = 0;   // Horizontal angle
+
+        // --- Lighting ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
+        directionalLight.position.set(10, 20, 5);
+        directionalLight.castShadow = true;
+        // Configure shadow properties for better quality/performance balance
+        directionalLight.shadow.mapSize.width = 1024;
+        directionalLight.shadow.mapSize.height = 1024;
+        directionalLight.shadow.camera.near = 0.5;
+        directionalLight.shadow.camera.far = 50;
+        directionalLight.shadow.camera.left = -20;
+        directionalLight.shadow.camera.right = 20;
+        directionalLight.shadow.camera.top = 20;
+        directionalLight.shadow.camera.bottom = -20;
+        scene.add(directionalLight);
+        // scene.add(new THREE.CameraHelper(directionalLight.shadow.camera)); // Uncomment to debug shadow camera
+
+        // --- Textures ---
+        const textureLoader = new THREE.TextureLoader();
+        const groundTexture = textureLoader.load('https://threejs.org/examples/textures/hardwood2_diffuse.jpg'); // Simple wood texture
+        groundTexture.wrapS = THREE.RepeatWrapping;
+        groundTexture.wrapT = THREE.RepeatWrapping;
+        groundTexture.repeat.set(20, 20); // Tile the texture
+
+        const playerTexture = textureLoader.load('https://threejs.org/examples/textures/brick_diffuse.jpg'); // Simple brick texture
+
+        // --- Materials ---
+        const groundMaterial = new THREE.MeshStandardMaterial({ map: groundTexture, roughness: 0.8, metalness: 0.2 });
+        const playerMaterial = new THREE.MeshStandardMaterial({ map: playerTexture, roughness: 0.5, metalness: 0.1 });
+
+        // --- Physics Setup (Cannon-es) ---
+        physicsWorld = new CANNON.World({
+            gravity: new CANNON.Vec3(0, -9.82 * 2, 0), // Slightly stronger gravity
+        });
+        physicsWorld.broadphase = new CANNON.NaiveBroadphase(); // Simple broadphase
+        physicsWorld.solver.iterations = 10; // Solver iterations
+
+        // Physics materials
+        const groundPhysMaterial = new CANNON.Material('groundMaterial');
+        const playerPhysMaterial = new CANNON.Material('playerMaterial');
+
+        const playerGroundContactMaterial = new CANNON.ContactMaterial(
+            playerPhysMaterial,
+            groundPhysMaterial,
+            {
+                friction: 0.1, // Low friction so player doesn't stick
+                restitution: 0.1 // A little bounce
+            }
+        );
+        physicsWorld.addContactMaterial(playerGroundContactMaterial);
+
+        // --- Ground ---
+        const groundGeometry = new THREE.PlaneGeometry(100, 100);
+        const groundMesh = new THREE.Mesh(groundGeometry, groundMaterial);
+        groundMesh.rotation.x = -Math.PI / 2; // Rotate to be flat
+        groundMesh.receiveShadow = true;
+        scene.add(groundMesh);
+
+        // Ground Physics Body
+        const groundShape = new CANNON.Plane();
+        const groundBody = new CANNON.Body({
+             mass: 0, // mass = 0 makes it static
+             material: groundPhysMaterial
+        });
+        groundBody.addShape(groundShape);
+        groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2); // Match mesh rotation
+        physicsWorld.addBody(groundBody);
+
+        // --- Player ---
+        const playerSize = { width: 1, height: 1.8, depth: 1 };
+        const playerGeometry = new THREE.BoxGeometry(playerSize.width, playerSize.height, playerSize.depth);
+        const playerMesh = new THREE.Mesh(playerGeometry, playerMaterial);
+        playerMesh.castShadow = true;
+        playerMesh.position.y = playerSize.height / 2 + 1; // Start slightly above ground
+        scene.add(playerMesh);
+
+        // Player Physics Body
+        const playerShape = new CANNON.Box(new CANNON.Vec3(playerSize.width / 2, playerSize.height / 2, playerSize.depth / 2));
+        const playerBody = new CANNON.Body({
+            mass: 70, // Player mass in kg
+            position: new CANNON.Vec3(0, playerMesh.position.y, 0),
+            shape: playerShape,
+            material: playerPhysMaterial,
+            fixedRotation: true, // Prevent player box from tumbling
+            allowSleep: false // Keep physics active
+        });
+        physicsWorld.addBody(playerBody);
+
+        // --- Input Handling ---
+        const keys = {};
+        let isPointerLocked = false;
+
+        document.addEventListener('keydown', (event) => { keys[event.code] = true; });
+        document.addEventListener('keyup', (event) => { keys[event.code] = false; });
+
+        // Mouse Look / Pointer Lock
+        document.addEventListener('click', () => {
+            if (!isPointerLocked) {
+                renderer.domElement.requestPointerLock({
+                    unadjustedMovement: true, // More raw mouse input if supported
+                });
+            }
+        });
+
+        document.addEventListener('pointerlockchange', () => {
+            isPointerLocked = document.pointerLockElement === renderer.domElement;
+            if (!isPointerLocked) {
+                console.log("Pointer unlocked");
+                // Optionally show cursor or pause game here
+            } else {
+                console.log("Pointer locked");
+            }
+        });
+        document.addEventListener('pointerlockerror', (error) => {
+            console.error('Pointer lock error:', error);
+        });
+
+
+        const lookSensitivity = 0.003;
+        const arrowKeyLookSpeed = 0.03; // Speed for arrow key camera rotation
+
+        document.addEventListener('mousemove', (event) => {
+            if (!isPointerLocked) return;
+
+            cameraYaw -= event.movementX * lookSensitivity;
+            cameraPitch -= event.movementY * lookSensitivity;
+
+            // Clamp vertical rotation to prevent flipping
+            cameraPitch = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, cameraPitch));
+        });
+
+
+        // --- Movement Variables ---
+        const moveSpeed = 5;
+        const jumpForce = 10; // Adjust as needed
+        let canJump = false;
+
+        // Ground check - simple raycast downwards
+        const groundCheckRay = new CANNON.Ray(
+             new CANNON.Vec3(0, 0, 0),
+             new CANNON.Vec3(0, -1, 0) // Ray points down
+        );
+        const raycastResult = new CANNON.RaycastResult();
+        const groundCheckDistance = playerSize.height / 2 + 0.1; // Slightly more than half height
+
+        function checkGrounded() {
+            groundCheckRay.from.copy(playerBody.position);
+            // Offset ray start slightly if needed, but center usually works for boxes
+            // groundCheckRay.from.y -= playerSize.height / 2 * 0.9; // Start slightly inside the box base
+            groundCheckRay.to.copy(playerBody.position);
+            groundCheckRay.to.y -= groundCheckDistance;
+
+            raycastResult.reset();
+            // Perform the raycast against the world, checking only for collision with the ground body for efficiency
+            // Note: For more complex scenes, you might check against more objects or use collision groups.
+             physicsWorld.raycastClosest(groundCheckRay.from, groundCheckRay.to, {}, raycastResult);
+
+             // Debug Ray
+             // const rayHelperGeometry = new THREE.BufferGeometry().setFromPoints([
+             //     new THREE.Vector3(groundCheckRay.from.x, groundCheckRay.from.y, groundCheckRay.from.z),
+             //     new THREE.Vector3(raycastResult.hitPointWorld.x, raycastResult.hitPointWorld.y, raycastResult.hitPointWorld.z)
+             // ]);
+             // const rayHelperMaterial = new THREE.LineBasicMaterial({ color: 0xff0000 });
+             // if (scene.getObjectByName("rayHelper")) scene.remove(scene.getObjectByName("rayHelper"));
+             // if (raycastResult.hasHit) {
+             //    const rayHelper = new THREE.Line(rayHelperGeometry, rayHelperMaterial);
+             //    rayHelper.name = "rayHelper";
+             //    scene.add(rayHelper);
+             // }
+
+
+            return raycastResult.hasHit && raycastResult.distance < groundCheckDistance;
+        }
+
+
+        // --- Game Loop (Animation) ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const deltaTime = clock.getDelta();
+            const time = clock.getElapsedTime();
+
+            // --- Handle Input and Movement ---
+            const moveDirection = new THREE.Vector3(0, 0, 0);
+            const forward = new THREE.Vector3();
+            const right = new THREE.Vector3();
+
+            // Get camera's forward and right vectors (ignoring pitch)
+            forward.set(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), cameraYaw);
+            right.set(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), cameraYaw);
+
+            if (keys['KeyW']) moveDirection.add(forward);
+            if (keys['KeyS']) moveDirection.sub(forward);
+            if (keys['KeyA']) moveDirection.sub(right);
+            if (keys['KeyD']) moveDirection.add(right);
+
+            moveDirection.normalize(); // Ensure consistent speed diagonally
+
+            // Apply movement force to physics body
+            const currentVelocity = playerBody.velocity;
+            const targetVelocity = new CANNON.Vec3(
+                moveDirection.x * moveSpeed,
+                currentVelocity.y, // Preserve vertical velocity (gravity, jump)
+                moveDirection.z * moveSpeed
+            );
+
+            // Simple velocity setting (less physically accurate but responsive)
+            playerBody.velocity.x = targetVelocity.x;
+            playerBody.velocity.z = targetVelocity.z;
+
+            // Alternative: Apply force (more physically based, can feel slippery)
+            // const force = new CANNON.Vec3(
+            //     (targetVelocity.x - currentVelocity.x) * playerBody.mass / deltaTime * 0.1, // Adjust multiplier for responsiveness
+            //     0,
+            //     (targetVelocity.z - currentVelocity.z) * playerBody.mass / deltaTime * 0.1
+            // );
+            // playerBody.applyForce(force);
+
+            // --- Handle Jumping ---
+            canJump = checkGrounded();
+            if (keys['Space'] && canJump) {
+                 // Apply an upward impulse for the jump
+                 playerBody.velocity.y = 0; // Reset vertical velocity before jump for consistent height
+                 playerBody.applyImpulse(new CANNON.Vec3(0, jumpForce * playerBody.mass * 0.1, 0)); // Impulse = mass * change_in_velocity
+                 canJump = false; // Prevent double jump in same frame
+            }
+
+            // --- Handle Arrow Key Camera ---
+             if (!isPointerLocked) { // Only use arrow keys if pointer isn't locked (or as primary)
+                 if (keys['ArrowUp']) cameraPitch -= arrowKeyLookSpeed;
+                 if (keys['ArrowDown']) cameraPitch += arrowKeyLookSpeed;
+                 if (keys['ArrowLeft']) cameraYaw += arrowKeyLookSpeed;
+                 if (keys['ArrowRight']) cameraYaw -= arrowKeyLookSpeed;
+
+                 // Clamp vertical rotation
+                 cameraPitch = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, cameraPitch));
+             }
+
+
+            // --- Update Physics World ---
+            if (physicsWorld) {
+                physicsWorld.step(1 / 60, deltaTime, 3); // Fixed timestep, delta, max sub-steps
+            }
+
+            // --- Sync Three.js Mesh with Physics Body ---
+            playerMesh.position.copy(playerBody.position);
+            // Don't copy quaternion because fixedRotation is true
+            // playerMesh.quaternion.copy(playerBody.quaternion);
+
+            // --- Update Camera Position (Third-Person Follow) ---
+            const playerPos = playerMesh.position;
+            cameraTarget.copy(playerPos).add(new THREE.Vector3(0, 1.0, 0)); // Look slightly above the player center
+
+            // Calculate desired camera position based on yaw, pitch, and distance
+            const cameraOffset = new THREE.Vector3(0, 0, cameraDistance);
+            cameraOffset.applyAxisAngle(new THREE.Vector3(1, 0, 0), cameraPitch); // Apply vertical rotation
+            cameraOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), cameraYaw);   // Apply horizontal rotation
+
+            const desiredCameraPosition = playerPos.clone().add(cameraOffset);
+
+            // Smoothly interpolate camera position (lerp)
+            camera.position.lerp(desiredCameraPosition, 0.1); // Adjust lerp factor for smoothness
+
+            // Make camera look at the target
+            camera.lookAt(cameraTarget);
+
+
+            // --- Render Scene ---
+            renderer.render(scene, camera);
+        }
+
+        // --- Handle Window Resize ---
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        });
+
+        // --- Start the game loop ---
+        animate();
+
+    </script>
+</body>
+</html>
