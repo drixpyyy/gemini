@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Basic 3D Game</title>
+    <title>Enhanced 3D Game</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #333; }
+        body { margin: 0; overflow: hidden; background-color: #111; /* Darker background */ }
         canvas { display: block; }
         #instructions {
             position: absolute;
@@ -13,9 +13,35 @@
             left: 10px;
             color: white;
             font-family: sans-serif;
-            background-color: rgba(0,0,0,0.5);
+            background-color: rgba(0,0,0,0.6);
             padding: 10px;
             border-radius: 5px;
+            font-size: 14px;
+            z-index: 10;
+        }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 10px;
+            height: 10px;
+            border: 1px solid white;
+            border-radius: 50%; /* Circle crosshair */
+            transform: translate(-50%, -50%);
+            pointer-events: none; /* Allow clicks to pass through */
+            z-index: 5;
+        }
+         #score {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: white;
+            font-family: sans-serif;
+            font-size: 24px;
+            background-color: rgba(0,0,0,0.6);
+            padding: 5px 10px;
+            border-radius: 5px;
+            z-index: 10;
         }
     </style>
 </head>
@@ -26,8 +52,11 @@
         - SPACE: Jump<br>
         - MOUSE: Look around<br>
         - ARROW KEYS: Look around (alternative)<br>
-        - CLICK: Lock mouse pointer
+        - CLICK: Lock mouse pointer<br>
+        - Collect the rotating cubes!
     </div>
+    <div id="crosshair"></div>
+    <div id="score">Score: 0</div>
     <canvas id="gameCanvas"></canvas>
 
     <!-- Import Maps for ES Modules -->
@@ -48,91 +77,113 @@
         // --- Basic Setup ---
         const scene = new THREE.Scene();
         const clock = new THREE.Clock();
-        let physicsWorld; // Initialize later
+        let physicsWorld;
+        const textureLoader = new THREE.TextureLoader();
+        const cubeTextureLoader = new THREE.CubeTextureLoader();
+
+        // --- Score ---
+        let score = 0;
+        const scoreElement = document.getElementById('score');
 
         // --- Renderer ---
         const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('gameCanvas'), antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         renderer.shadowMap.enabled = true;
-        renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Softer shadows
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        // Set clear color for fog blending
+        // renderer.setClearColor(0x87CEEB); // Match fog or skybox color if needed
 
         // --- Camera ---
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.set(0, 5, 10); // Initial camera position
-        let cameraTarget = new THREE.Vector3(); // Point the camera looks at
-        let cameraDistance = 8; // Distance from player
-        let cameraPitch = 0.3; // Vertical angle
-        let cameraYaw = 0;   // Horizontal angle
+        camera.position.set(0, 5, 10);
+        let cameraTarget = new THREE.Vector3();
+        let cameraDistance = 8;
+        let cameraPitch = 0.3;
+        let cameraYaw = 0;
 
         // --- Lighting ---
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7); // Slightly brighter ambient
         scene.add(ambientLight);
 
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
-        directionalLight.position.set(10, 20, 5);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2); // Slightly brighter directional
+        directionalLight.position.set(15, 25, 10);
         directionalLight.castShadow = true;
-        // Configure shadow properties for better quality/performance balance
         directionalLight.shadow.mapSize.width = 1024;
         directionalLight.shadow.mapSize.height = 1024;
         directionalLight.shadow.camera.near = 0.5;
-        directionalLight.shadow.camera.far = 50;
-        directionalLight.shadow.camera.left = -20;
-        directionalLight.shadow.camera.right = 20;
-        directionalLight.shadow.camera.top = 20;
-        directionalLight.shadow.camera.bottom = -20;
+        directionalLight.shadow.camera.far = 60; // Extend shadow range slightly
+        directionalLight.shadow.camera.left = -25;
+        directionalLight.shadow.camera.right = 25;
+        directionalLight.shadow.camera.top = 25;
+        directionalLight.shadow.camera.bottom = -25;
         scene.add(directionalLight);
-        // scene.add(new THREE.CameraHelper(directionalLight.shadow.camera)); // Uncomment to debug shadow camera
+        // scene.add(new THREE.CameraHelper(directionalLight.shadow.camera));
+
+        // --- Fog ---
+        const fogColor = 0xaaaaaa; // Light gray fog
+        const fogNear = 15;
+        const fogFar = 50;
+        scene.fog = new THREE.Fog(fogColor, fogNear, fogFar);
+        renderer.setClearColor(fogColor); // Match renderer background to fog
+
+        // --- Skybox ---
+        const skyboxTexture = cubeTextureLoader.load([
+            'https://threejs.org/examples/textures/cube/skyboxsun25deg/px.jpg', // pos-x
+            'https://threejs.org/examples/textures/cube/skyboxsun25deg/nx.jpg', // neg-x
+            'https://threejs.org/examples/textures/cube/skyboxsun25deg/py.jpg', // pos-y
+            'https://threejs.org/examples/textures/cube/skyboxsun25deg/ny.jpg', // neg-y
+            'https://threejs.org/examples/textures/cube/skyboxsun25deg/pz.jpg', // pos-z
+            'https://threejs.org/examples/textures/cube/skyboxsun25deg/nz.jpg'  // neg-z
+        ]);
+        scene.background = skyboxTexture;
 
         // --- Textures ---
-        const textureLoader = new THREE.TextureLoader();
-        const groundTexture = textureLoader.load('https://threejs.org/examples/textures/hardwood2_diffuse.jpg'); // Simple wood texture
+        const groundTexture = textureLoader.load('https://threejs.org/examples/textures/terrain/grasslight-big.jpg'); // Grass texture
         groundTexture.wrapS = THREE.RepeatWrapping;
         groundTexture.wrapT = THREE.RepeatWrapping;
-        groundTexture.repeat.set(20, 20); // Tile the texture
+        groundTexture.repeat.set(30, 30);
 
-        const playerTexture = textureLoader.load('https://threejs.org/examples/textures/brick_diffuse.jpg'); // Simple brick texture
+        const playerTexture = textureLoader.load('https://threejs.org/examples/textures/crate.gif'); // Crate texture
+        const obstacleTexture = textureLoader.load('https://threejs.org/examples/textures/hardwood2_roughness.jpg'); // Wood for obstacles
 
         // --- Materials ---
-        const groundMaterial = new THREE.MeshStandardMaterial({ map: groundTexture, roughness: 0.8, metalness: 0.2 });
-        const playerMaterial = new THREE.MeshStandardMaterial({ map: playerTexture, roughness: 0.5, metalness: 0.1 });
+        const groundMaterial = new THREE.MeshStandardMaterial({ map: groundTexture, roughness: 0.9, metalness: 0.1 });
+        const playerMaterial = new THREE.MeshStandardMaterial({ map: playerTexture, roughness: 0.6, metalness: 0.2 });
+        const obstacleMaterial = new THREE.MeshStandardMaterial({ map: obstacleTexture, roughness: 0.8, metalness: 0.1 });
+        const collectibleMaterial = new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xccaa00, roughness: 0.4, metalness: 0.5 }); // Shiny gold
 
         // --- Physics Setup (Cannon-es) ---
         physicsWorld = new CANNON.World({
-            gravity: new CANNON.Vec3(0, -9.82 * 2, 0), // Slightly stronger gravity
+            gravity: new CANNON.Vec3(0, -9.82 * 2, 0),
         });
-        physicsWorld.broadphase = new CANNON.NaiveBroadphase(); // Simple broadphase
-        physicsWorld.solver.iterations = 10; // Solver iterations
+        physicsWorld.broadphase = new CANNON.SAPBroadphase(physicsWorld); // More efficient broadphase
+        physicsWorld.solver.iterations = 10;
+        physicsWorld.allowSleep = true; // Allow bodies to sleep for performance
 
         // Physics materials
-        const groundPhysMaterial = new CANNON.Material('groundMaterial');
-        const playerPhysMaterial = new CANNON.Material('playerMaterial');
+        const groundPhysMaterial = new CANNON.Material('ground');
+        const playerPhysMaterial = new CANNON.Material('player');
+        const obstaclePhysMaterial = new CANNON.Material('obstacle');
+        const collectiblePhysMaterial = new CANNON.Material('collectible'); // For event handling
 
-        const playerGroundContactMaterial = new CANNON.ContactMaterial(
-            playerPhysMaterial,
-            groundPhysMaterial,
-            {
-                friction: 0.1, // Low friction so player doesn't stick
-                restitution: 0.1 // A little bounce
-            }
-        );
-        physicsWorld.addContactMaterial(playerGroundContactMaterial);
+        // Contact Materials
+        const playerGround = new CANNON.ContactMaterial(playerPhysMaterial, groundPhysMaterial, { friction: 0.3, restitution: 0.1 });
+        const playerObstacle = new CANNON.ContactMaterial(playerPhysMaterial, obstaclePhysMaterial, { friction: 0.4, restitution: 0.0 });
+        physicsWorld.addContactMaterial(playerGround);
+        physicsWorld.addContactMaterial(playerObstacle);
+        // No specific contact needed for collectible if using collision events without physical response
 
         // --- Ground ---
         const groundGeometry = new THREE.PlaneGeometry(100, 100);
         const groundMesh = new THREE.Mesh(groundGeometry, groundMaterial);
-        groundMesh.rotation.x = -Math.PI / 2; // Rotate to be flat
+        groundMesh.rotation.x = -Math.PI / 2;
         groundMesh.receiveShadow = true;
         scene.add(groundMesh);
 
-        // Ground Physics Body
         const groundShape = new CANNON.Plane();
-        const groundBody = new CANNON.Body({
-             mass: 0, // mass = 0 makes it static
-             material: groundPhysMaterial
-        });
-        groundBody.addShape(groundShape);
-        groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2); // Match mesh rotation
+        const groundBody = new CANNON.Body({ mass: 0, material: groundPhysMaterial, shape: groundShape });
+        groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
         physicsWorld.addBody(groundBody);
 
         // --- Player ---
@@ -140,20 +191,81 @@
         const playerGeometry = new THREE.BoxGeometry(playerSize.width, playerSize.height, playerSize.depth);
         const playerMesh = new THREE.Mesh(playerGeometry, playerMaterial);
         playerMesh.castShadow = true;
-        playerMesh.position.y = playerSize.height / 2 + 1; // Start slightly above ground
+        playerMesh.position.y = playerSize.height / 2 + 1;
         scene.add(playerMesh);
 
-        // Player Physics Body
         const playerShape = new CANNON.Box(new CANNON.Vec3(playerSize.width / 2, playerSize.height / 2, playerSize.depth / 2));
         const playerBody = new CANNON.Body({
-            mass: 70, // Player mass in kg
+            mass: 70,
             position: new CANNON.Vec3(0, playerMesh.position.y, 0),
             shape: playerShape,
             material: playerPhysMaterial,
-            fixedRotation: true, // Prevent player box from tumbling
-            allowSleep: false // Keep physics active
+            fixedRotation: true,
+            allowSleep: false
         });
         physicsWorld.addBody(playerBody);
+
+        // --- Obstacles ---
+        const obstacles = []; // Store references if needed later
+        const obstaclePositions = [
+            { x: 5, y: 1, z: 5, sx: 2, sy: 2, sz: 2 },
+            { x: -8, y: 1.5, z: -3, sx: 3, sy: 3, sz: 3 },
+            { x: 0, y: 0.5, z: -10, sx: 10, sy: 1, sz: 1 },
+        ];
+
+        obstaclePositions.forEach(pos => {
+            const obsGeometry = new THREE.BoxGeometry(pos.sx, pos.sy, pos.sz);
+            const obsMesh = new THREE.Mesh(obsGeometry, obstacleMaterial);
+            obsMesh.position.set(pos.x, pos.y, pos.z);
+            obsMesh.castShadow = true;
+            obsMesh.receiveShadow = true;
+            scene.add(obsMesh);
+
+            const obsShape = new CANNON.Box(new CANNON.Vec3(pos.sx / 2, pos.sy / 2, pos.sz / 2));
+            const obsBody = new CANNON.Body({
+                mass: 0, // Static
+                position: new CANNON.Vec3(pos.x, pos.y, pos.z),
+                shape: obsShape,
+                material: obstaclePhysMaterial
+            });
+            physicsWorld.addBody(obsBody);
+            obstacles.push({ mesh: obsMesh, body: obsBody });
+        });
+
+
+        // --- Collectibles ---
+        const collectibles = [];
+        const collectibleGeometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+        const numCollectibles = 10;
+
+        for (let i = 0; i < numCollectibles; i++) {
+            const angle = (i / numCollectibles) * Math.PI * 2;
+            const radius = 15;
+            const x = Math.cos(angle) * radius;
+            const z = Math.sin(angle) * radius;
+            const y = 1.5; // Height above ground
+
+            const collMesh = new THREE.Mesh(collectibleGeometry, collectibleMaterial);
+            collMesh.position.set(x, y, z);
+            collMesh.castShadow = true;
+            scene.add(collMesh);
+
+            const collShape = new CANNON.Box(new CANNON.Vec3(0.25, 0.25, 0.25));
+            const collBody = new CANNON.Body({
+                mass: 0, // Static for simplicity, could be dynamic trigger
+                position: new CANNON.Vec3(x, y, z),
+                shape: collShape,
+                material: collectiblePhysMaterial, // Assign specific material
+                isTrigger: true // CANNON-ES specific: Makes it a trigger volume
+                // Note: `isTrigger` might not be universally supported or work as expected in all versions/setups.
+                // The alternative is using collision events without `isTrigger`.
+                // collisionResponse: false // Alternative: Disable physical collision response
+            });
+            collBody.userData = { mesh: collMesh, type: 'collectible' }; // Link body to mesh and identify type
+            physicsWorld.addBody(collBody);
+            collectibles.push({ mesh: collMesh, body: collBody });
+        }
+
 
         // --- Input Handling ---
         const keys = {};
@@ -161,92 +273,135 @@
 
         document.addEventListener('keydown', (event) => { keys[event.code] = true; });
         document.addEventListener('keyup', (event) => { keys[event.code] = false; });
-
-        // Mouse Look / Pointer Lock
-        document.addEventListener('click', () => {
-            if (!isPointerLocked) {
-                renderer.domElement.requestPointerLock({
-                    unadjustedMovement: true, // More raw mouse input if supported
-                });
-            }
-        });
-
-        document.addEventListener('pointerlockchange', () => {
-            isPointerLocked = document.pointerLockElement === renderer.domElement;
-            if (!isPointerLocked) {
-                console.log("Pointer unlocked");
-                // Optionally show cursor or pause game here
-            } else {
-                console.log("Pointer locked");
-            }
-        });
-        document.addEventListener('pointerlockerror', (error) => {
-            console.error('Pointer lock error:', error);
-        });
-
+        document.addEventListener('click', () => { if (!isPointerLocked) renderer.domElement.requestPointerLock({ unadjustedMovement: true }); });
+        document.addEventListener('pointerlockchange', () => { isPointerLocked = document.pointerLockElement === renderer.domElement; });
+        document.addEventListener('pointerlockerror', (error) => { console.error('Pointer lock error:', error); });
 
         const lookSensitivity = 0.003;
-        const arrowKeyLookSpeed = 0.03; // Speed for arrow key camera rotation
+        const arrowKeyLookSpeed = 0.03;
 
         document.addEventListener('mousemove', (event) => {
             if (!isPointerLocked) return;
-
             cameraYaw -= event.movementX * lookSensitivity;
             cameraPitch -= event.movementY * lookSensitivity;
-
-            // Clamp vertical rotation to prevent flipping
             cameraPitch = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, cameraPitch));
         });
 
 
-        // --- Movement Variables ---
-        const moveSpeed = 16;
-        const jumpForce = 50; // Adjust as needed
+        // --- Movement & State Variables ---
+        const moveSpeed = 6; // Slightly faster
+        const jumpForce = 12;
         let canJump = false;
+        let wasAirborne = false; // For landing sound logic
 
-        // Ground check - simple raycast downwards
-        const groundCheckRay = new CANNON.Ray(
-             new CANNON.Vec3(0, 0, 0),
-             new CANNON.Vec3(0, -1, 0) // Ray points down
-        );
+
+        // --- Audio ---
+        let audioCtx;
+        function initAudio() {
+             try {
+                 audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+             } catch (e) {
+                 console.warn("Web Audio API is not supported in this browser");
+             }
+        }
+        // Call initAudio() after first user interaction (e.g., click to lock pointer)
+         document.addEventListener('click', initAudio, { once: true });
+
+         function playJumpSound() {
+             if (!audioCtx) return;
+             const oscillator = audioCtx.createOscillator();
+             const gainNode = audioCtx.createGain();
+
+             oscillator.type = 'sine'; // Simple sound
+             oscillator.frequency.setValueAtTime(440, audioCtx.currentTime); // A4 pitch
+             oscillator.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.1); // Pitch up quickly
+
+             gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime); // Start volume
+             gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2); // Fade out
+
+             oscillator.connect(gainNode);
+             gainNode.connect(audioCtx.destination);
+
+             oscillator.start();
+             oscillator.stop(audioCtx.currentTime + 0.2); // Stop after 0.2 seconds
+         }
+
+         function playLandingSound() {
+             // Placeholder: Implement landing sound playback here if you have an audio file/buffer
+             // console.log("Landed!");
+             // Example using Web Audio API like jump sound:
+             if (!audioCtx) return;
+              const oscillator = audioCtx.createOscillator();
+              const gainNode = audioCtx.createGain();
+              oscillator.type = 'square';
+              oscillator.frequency.setValueAtTime(100, audioCtx.currentTime);
+              gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+              gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+              oscillator.connect(gainNode);
+              gainNode.connect(audioCtx.destination);
+              oscillator.start();
+              oscillator.stop(audioCtx.currentTime + 0.1);
+         }
+
+
+        // --- Ground Check ---
+        const groundCheckRay = new CANNON.Ray(new CANNON.Vec3(0,0,0), new CANNON.Vec3(0, -1, 0));
         const raycastResult = new CANNON.RaycastResult();
-        const groundCheckDistance = playerSize.height / 2 + 0.1; // Slightly more than half height
+        const groundCheckDistance = playerSize.height / 2 + 0.15; // Increased slightly
 
         function checkGrounded() {
             groundCheckRay.from.copy(playerBody.position);
-            // Offset ray start slightly if needed, but center usually works for boxes
-            // groundCheckRay.from.y -= playerSize.height / 2 * 0.9; // Start slightly inside the box base
             groundCheckRay.to.copy(playerBody.position);
             groundCheckRay.to.y -= groundCheckDistance;
-
             raycastResult.reset();
-            // Perform the raycast against the world, checking only for collision with the ground body for efficiency
-            // Note: For more complex scenes, you might check against more objects or use collision groups.
-             physicsWorld.raycastClosest(groundCheckRay.from, groundCheckRay.to, {}, raycastResult);
 
-             // Debug Ray
-             // const rayHelperGeometry = new THREE.BufferGeometry().setFromPoints([
-             //     new THREE.Vector3(groundCheckRay.from.x, groundCheckRay.from.y, groundCheckRay.from.z),
-             //     new THREE.Vector3(raycastResult.hitPointWorld.x, raycastResult.hitPointWorld.y, raycastResult.hitPointWorld.z)
-             // ]);
-             // const rayHelperMaterial = new THREE.LineBasicMaterial({ color: 0xff0000 });
-             // if (scene.getObjectByName("rayHelper")) scene.remove(scene.getObjectByName("rayHelper"));
-             // if (raycastResult.hasHit) {
-             //    const rayHelper = new THREE.Line(rayHelperGeometry, rayHelperMaterial);
-             //    rayHelper.name = "rayHelper";
-             //    scene.add(rayHelper);
-             // }
+             // Raycast options: Check against everything except player and collectibles (using collision groups could be better)
+             const options = {
+                // collisionFilterMask: ~PLAYER_GROUP // Example if using collision groups
+                 skipBackfaces: true
+             };
 
+             // We need to check against the ground and potentially obstacles
+             physicsWorld.raycastClosest(groundCheckRay.from, groundCheckRay.to, options, raycastResult);
 
-            return raycastResult.hasHit && raycastResult.distance < groundCheckDistance;
+            // Simple check: Is there *any* hit within the distance?
+             return raycastResult.hasHit && raycastResult.distance <= groundCheckDistance;
         }
+
+
+        // --- Collision Event Handling ---
+        playerBody.addEventListener('collide', (event) => {
+             const contact = event.contact;
+             const otherBody = contact.bi.id === playerBody.id ? contact.bj : contact.bi;
+
+            // Check if the other body is a collectible using userData
+             if (otherBody.userData?.type === 'collectible') {
+                 // Collect the item
+                 if (otherBody.userData.mesh && scene.getObjectById(otherBody.userData.mesh.id)) {
+                     // Remove from scene
+                     scene.remove(otherBody.userData.mesh);
+                     // Remove from physics world
+                     physicsWorld.removeBody(otherBody);
+                     // Remove from our collectibles array (optional, but good practice)
+                     const index = collectibles.findIndex(c => c.body.id === otherBody.id);
+                     if (index > -1) collectibles.splice(index, 1);
+
+                     // Update score
+                     score++;
+                     scoreElement.textContent = `Score: ${score}`;
+
+                     // Play collection sound (optional)
+                     // playCollectSound();
+                 }
+             }
+        });
 
 
         // --- Game Loop (Animation) ---
         function animate() {
             requestAnimationFrame(animate);
 
-            const deltaTime = clock.getDelta();
+            const deltaTime = Math.min(clock.getDelta(), 0.1); // Clamp delta time to avoid large jumps
             const time = clock.getElapsedTime();
 
             // --- Handle Input and Movement ---
@@ -254,7 +409,6 @@
             const forward = new THREE.Vector3();
             const right = new THREE.Vector3();
 
-            // Get camera's forward and right vectors (ignoring pitch)
             forward.set(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), cameraYaw);
             right.set(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), cameraYaw);
 
@@ -263,76 +417,77 @@
             if (keys['KeyA']) moveDirection.sub(right);
             if (keys['KeyD']) moveDirection.add(right);
 
-            moveDirection.normalize(); // Ensure consistent speed diagonally
+            moveDirection.normalize();
 
-            // Apply movement force to physics body
             const currentVelocity = playerBody.velocity;
             const targetVelocity = new CANNON.Vec3(
                 moveDirection.x * moveSpeed,
-                currentVelocity.y, // Preserve vertical velocity (gravity, jump)
+                currentVelocity.y,
                 moveDirection.z * moveSpeed
             );
-
-            // Simple velocity setting (less physically accurate but responsive)
+            // Directly setting velocity for responsiveness
             playerBody.velocity.x = targetVelocity.x;
             playerBody.velocity.z = targetVelocity.z;
 
-            // Alternative: Apply force (more physically based, can feel slippery)
-            // const force = new CANNON.Vec3(
-            //     (targetVelocity.x - currentVelocity.x) * playerBody.mass / deltaTime * 0.1, // Adjust multiplier for responsiveness
-            //     0,
-            //     (targetVelocity.z - currentVelocity.z) * playerBody.mass / deltaTime * 0.1
-            // );
-            // playerBody.applyForce(force);
+            // --- Handle Jumping & Landing Sound ---
+            const grounded = checkGrounded();
+            canJump = grounded;
 
-            // --- Handle Jumping ---
-            canJump = checkGrounded();
+             if (grounded && wasAirborne) {
+                 playLandingSound(); // Play sound when transitioning from air to ground
+                 wasAirborne = false;
+             } else if (!grounded) {
+                 wasAirborne = true;
+             }
+
             if (keys['Space'] && canJump) {
-                 // Apply an upward impulse for the jump
-                 playerBody.velocity.y = 0; // Reset vertical velocity before jump for consistent height
-                 playerBody.applyImpulse(new CANNON.Vec3(0, jumpForce * playerBody.mass * 0.1, 0)); // Impulse = mass * change_in_velocity
-                 canJump = false; // Prevent double jump in same frame
+                 playerBody.velocity.y = jumpForce; // Apply jump velocity directly
+                 canJump = false;
+                 wasAirborne = true; // Immediately airborne after jump
+                 playJumpSound();
             }
 
-            // --- Handle Arrow Key Camera ---
-             if (!isPointerLocked) { // Only use arrow keys if pointer isn't locked (or as primary)
-                 if (keys['ArrowUp']) cameraPitch -= arrowKeyLookSpeed;
-                 if (keys['ArrowDown']) cameraPitch += arrowKeyLookSpeed;
-                 if (keys['ArrowLeft']) cameraYaw += arrowKeyLookSpeed;
-                 if (keys['ArrowRight']) cameraYaw -= arrowKeyLookSpeed;
 
-                 // Clamp vertical rotation
+            // --- Handle Arrow Key Camera ---
+             if (true) { // Always allow arrow keys for touchpad users
+                 const horizontalLook = (keys['ArrowLeft'] ? 1 : 0) + (keys['ArrowRight'] ? -1 : 0);
+                 const verticalLook = (keys['ArrowUp'] ? -1 : 0) + (keys['ArrowDown'] ? 1 : 0);
+
+                 cameraYaw += horizontalLook * arrowKeyLookSpeed;
+                 cameraPitch += verticalLook * arrowKeyLookSpeed;
                  cameraPitch = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, cameraPitch));
              }
 
-
             // --- Update Physics World ---
-            if (physicsWorld) {
-                physicsWorld.step(1 / 60, deltaTime, 3); // Fixed timestep, delta, max sub-steps
-            }
+            physicsWorld.step(1 / 60, deltaTime, 3);
 
-            // --- Sync Three.js Mesh with Physics Body ---
+            // --- Sync Three.js Meshes with Physics Bodies ---
             playerMesh.position.copy(playerBody.position);
-            // Don't copy quaternion because fixedRotation is true
-            // playerMesh.quaternion.copy(playerBody.quaternion);
+            // Offset mesh slightly if physics body sinks into ground visually
+            playerMesh.position.y = Math.max(playerMesh.position.y, playerSize.height / 2);
 
-            // --- Update Camera Position (Third-Person Follow) ---
+            // Animate collectibles
+            collectibles.forEach(coll => {
+                coll.mesh.rotation.y += 0.02;
+                coll.mesh.rotation.x += 0.01;
+            });
+
+
+            // --- Update Camera Position ---
             const playerPos = playerMesh.position;
-            cameraTarget.copy(playerPos).add(new THREE.Vector3(0, 1.0, 0)); // Look slightly above the player center
+            cameraTarget.copy(playerPos).add(new THREE.Vector3(0, 1.0, 0)); // Look slightly above center
 
-            // Calculate desired camera position based on yaw, pitch, and distance
             const cameraOffset = new THREE.Vector3(0, 0, cameraDistance);
-            cameraOffset.applyAxisAngle(new THREE.Vector3(1, 0, 0), cameraPitch); // Apply vertical rotation
-            cameraOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), cameraYaw);   // Apply horizontal rotation
+            cameraOffset.applyAxisAngle(new THREE.Vector3(1, 0, 0), cameraPitch);
+            cameraOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), cameraYaw);
 
             const desiredCameraPosition = playerPos.clone().add(cameraOffset);
 
-            // Smoothly interpolate camera position (lerp)
-            camera.position.lerp(desiredCameraPosition, 0.1); // Adjust lerp factor for smoothness
+            // Optional: Add camera collision detection here (more complex)
+            // For now, simple lerp:
+            camera.position.lerp(desiredCameraPosition, 0.15); // Slightly faster lerp
 
-            // Make camera look at the target
             camera.lookAt(cameraTarget);
-
 
             // --- Render Scene ---
             renderer.render(scene, camera);
